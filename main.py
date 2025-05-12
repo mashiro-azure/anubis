@@ -9,6 +9,8 @@ import numpy
 import cv2
 import imgui
 
+from ultralytics import YOLO
+
 # import Jetson.GPIO as GPIO
 import OpenGL.GL as gl
 import sdl2 as sdl
@@ -18,16 +20,17 @@ from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 from influxdb_client.client.exceptions import InfluxDBError
 
-VideoDevice = 1
-webcam_frame_width = 2560
-webcam_frame_height = 720
+VideoDevice = 0
+webcam_frame_width = 640
+webcam_frame_height = 480
 # GPIOLEDPin = 7
+
+OPENVINO_MODEL_PATH = "./yolo11s_int8_openvino_model/"
 
 
 class CameraThread:
-    def __init__(self, src, width, height, model):
+    def __init__(self, src, width, height):
         self.src = src
-        self.model = model
         self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -42,7 +45,6 @@ class CameraThread:
             print("No more frames.")
             return
         self.img_rgb = cv2.cvtColor(self.image, cv2.COLOR_BGR2RGB)
-        self.output = self.model(self.img_rgb)
 
         self.thread = threading.Thread(target=self.update, daemon=True)
         self.started = False
@@ -57,7 +59,7 @@ class CameraThread:
             self.ret, self.image = self.cap.read()
 
     def read(self):
-        return self.image, self.output
+        return self.image
 
     def bind(self, image):
         # opengl prepare textures
@@ -92,18 +94,13 @@ def impl_pysdl2_init():
         print("Error: SDL could not initialize! SDL Error: " + sdl.SDL_GetError().decode("utf-8"))
         exit(1)
 
-    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_DOUBLEBUFFER, 1)
-    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_DEPTH_SIZE, 24)
-    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_STENCIL_SIZE, 8)
+    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_DOUBLEBUFFER, 1)
     sdl.SDL_GL_SetAttribute(sdl.SDL_GL_ACCELERATED_VISUAL, 1)
-    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_MULTISAMPLEBUFFERS, 1)
-    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_MULTISAMPLESAMPLES, 16)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_FLAGS, sdl.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MAJOR_VERSION, 4)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MINOR_VERSION, 6)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_PROFILE_MASK, sdl.SDL_GL_CONTEXT_PROFILE_COMPATIBILITY)
+    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_FLAGS, sdl.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG)
+    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MAJOR_VERSION, 2)
+    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MINOR_VERSION, 1)
+    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_PROFILE_MASK, sdl.SDL_GL_CONTEXT_PROFILE_COMPATIBILITY)
 
-    # sdl.SDL_SetHint(sdl.SDL_HINT_MAC_CTRL_CLICK_EMULATE_RIGHT_CLICK, b"1")
     # sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_HIGHDPI_DISABLED, b"1")
 
     window = sdl.SDL_CreateWindow(
@@ -128,30 +125,36 @@ def impl_pysdl2_init():
     if sdl.SDL_GL_SetSwapInterval(1) < 0:
         print("Warning: Unable to set VSync! SDL Error: " + sdl.SDL_GetError().decode("utf-8"))
         exit(1)
-    sdl.SDL_GL_SetSwapInterval(0)
+    sdl.SDL_GL_SetSwapInterval(1)
 
     return window, gl_context
 
 
+def yolo_predict(model, src):
+    #   Path to yolov5, 'custom', path to weight, source='local'
+    results = model.predict(source=src, classes=[0])
+    return results[0]
+
+
 # 3 FPS impact (TODO: switch to threading?)
-def loggingToInfluxDB(noMaskCount):
-    bucket = "maskAI"
-    with InfluxDBClient.from_config_file("influxdb.ini") as client:
-        try:
-            DBHealth = client.health()
-            if DBHealth.status == "pass":
-                p = Point("no_mask").field("amount", noMaskCount)
-                client.write_api(write_options=SYNCHRONOUS).write(
-                    bucket=bucket, record=p, write_precision=WritePrecision.S
-                )
-        except InfluxDBError as e:
-            pass
-    return str(DBHealth.message)
+# def loggingToInfluxDB(noMaskCount):
+#     bucket = "maskAI"
+#     with InfluxDBClient.from_config_file("influxdb.ini") as client:
+#         try:
+#             DBHealth = client.health()
+#             if DBHealth.status == "pass":
+#                 p = Point("no_mask").field("amount", noMaskCount)
+#                 client.write_api(write_options=SYNCHRONOUS).write(
+#                     bucket=bucket, record=p, write_precision=WritePrecision.S
+#                 )
+#         except InfluxDBError as e:
+#             pass
+#     return str(DBHealth.message)
 
 
 def showSplash(SDLwindow):
     splashImage = Image.open("SplashScreen-2.png").convert("RGB").transpose(Image.FLIP_TOP_BOTTOM)
-    splashImageData = numpy.array(list(splashImage.getdata()), numpy.uint8)
+    splashImageData = numpy.array(splashImage, numpy.uint8)
 
     splashTexture = gl.glGenTextures(1)  # it doesn't want to bind to array texture, so separate textures creation.
     gl.glBindTexture(gl.GL_TEXTURE_2D, splashTexture)
@@ -171,7 +174,7 @@ def showSplash(SDLwindow):
 
     splashImage.close()
 
-    gl.glColor3f(1.0, 1.0, 1.0)  # reset texture color, as GL_TEXTURE_ENV_MODE = GL_MODULATE, refer to glTexEnv
+    # gl.glColor3f(1.0, 1.0, 1.0)  # reset texture color, as GL_TEXTURE_ENV_MODE = GL_MODULATE, refer to glTexEnv
     gl.glEnable(gl.GL_TEXTURE_2D)
     gl.glBegin(gl.GL_QUADS)
     gl.glTexCoord2f(0, 0)
@@ -191,28 +194,18 @@ def showSplash(SDLwindow):
 def main():
     SDLwindow, glContext = impl_pysdl2_init()
     showSplash(SDLwindow)
-    # Setup YOLOv5
-    devices = "cuda" if torch.cuda.is_available() else "cpu"
-    model = torch.hub.load(
-        "yolov5",
-        "custom",
-        path="models/20230122-mixedDataset-300epoch.pt",
-        source="local",
-    )
-    #   Path to yolov5, 'custom', path to weight, source='local'
-    model.to(devices)
-    model.eval()
 
     # Setup GPIO
     # GPIO.setmode(GPIO.BOARD)
     # GPIO.setup(GPIOLEDPin, GPIO.OUT, initial=GPIO.LOW)
+
+    model = YOLO(OPENVINO_MODEL_PATH, task="detect")
 
     # Setup Image Capture
     video = CameraThread(
         src=VideoDevice,
         width=webcam_frame_width,
         height=webcam_frame_height,
-        model=model,
     )
     video.start()
     frame_height = webcam_frame_height
@@ -220,7 +213,8 @@ def main():
 
     # Setup logging
     timeRetain = ""
-    DBhealth = loggingToInfluxDB(0)
+    # DBhealth = loggingToInfluxDB(0)
+    DBhealth = ""
     timeEpoch = time.time()
 
     # Setup imgui
@@ -230,7 +224,7 @@ def main():
 
     io = imgui.get_io()  # type: ignore
     clearColorRGB = 1.0, 1.0, 1.0
-    newFont = io.fonts.add_font_from_file_ttf("fonts/NotoSansMono-Regular.ttf", 36)
+    # newFont = io.fonts.add_font_from_file_ttf("fonts/NotoSansMono-Regular.ttf", 36)
     impl.refresh_font_texture()
 
     # States and variables
@@ -250,62 +244,31 @@ def main():
 
     while running:
         # read frame
-        image, output = video.read()
+        image = video.read()
         # print(output)
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        output = model(img_rgb)
+        output = yolo_predict(model, img_rgb)
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
-        for box in output.xyxy[0]:
-            xmin, ymin, xmax, ymax = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-            # boxes
-            if cBoxBoxClass == True and box[5] == 0 and box[4] > boxThreshold:
-                image = cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (97, 105, 255), 6)
-                image = cv2.rectangle(image, (xmin, ymin), (xmin + 150, ymin - 30), (97, 105, 255), -1)
-                image = cv2.putText(
-                    image,
-                    f"Box {box[4]:.2f}",
-                    (int(xmin), int(ymin) - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-            # With Masks
-            if cBoxWithMaskClass == True and box[5] == 1 and box[4] > maskThreshold:
-                image = cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (119, 221, 119), 6)
-                image = cv2.rectangle(image, (xmin, ymin), (xmin + 250, ymin - 30), (119, 221, 119), -1)
-                image = cv2.putText(
-                    image,
-                    f"With Mask {box[4]:.2f}",
-                    (int(xmin), int(ymin) - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-            # Without Masks
-            if cBoxWithoutMaskClass == True and box[5] == 2:
-                image = cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (97, 105, 255), 6)
-                image = cv2.rectangle(image, (xmin, ymin), (xmin + 210, ymin - 30), (97, 105, 255), -1)
-                image = cv2.putText(
-                    image,
-                    "Without Mask",
-                    (int(xmin), int(ymin) - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-
-            # Masks Worn Incorrectly
-            if cBoxWrongMaskClass == True and box[5] == 3:
-                image = cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (152, 200, 250), 2)
-
+        if output.boxes.xyxy.size()[0] != 0:  # how many object detected
+            for box in output.boxes:
+                xmin, ymin, xmax, ymax, conf, _ = box.data.tolist()[0]
+                xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
+                # boxes
+                if cBoxBoxClass is True and conf > boxThreshold:
+                    image = cv2.rectangle(image, (xmin, ymin), (xmax, ymax), (97, 105, 255), 6)
+                    image = cv2.rectangle(image, (xmin, ymin), (xmin + 150, ymin - 30), (97, 105, 255), -1)
+                    image = cv2.putText(
+                        image,
+                        f"Person {conf:.2f}",
+                        (int(xmin), int(ymin) - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
         video.bind(image=image)
 
         # SDL & imgui event polling
@@ -319,7 +282,7 @@ def main():
         imgui.new_frame()  # type: ignore
 
         if showCustomWindow:
-            preprocess_time, inference_time, NMS_time = re.findall(r"[\d\.\d]+(?=ms)", str(output))
+            preprocess_time, inference_time, NMS_time = output.speed
             expandCustomWindow, showCustomWindow = imgui.begin("sdlWindow", True)
             imgui.text(f"FPS: {io.framerate:.2f}")
             _, clearColorRGB = imgui.color_edit3("Background Color", *clearColorRGB)
@@ -359,31 +322,11 @@ def main():
         timeNow = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         # Separate box and head count. 0 = box, 1 = mask, 2 = wo_mask, 3 = wrong_mask
         # There should be a better way of doing this...
-        output_df = output.pandas().xyxy[0]["class"].tolist()
+        output_df = output.to_df()
         boxCount = output_df.count(0)
-        withMaskCount = output_df.count(1)
-        noMaskCount = output_df.count(2)
-        wrongMaskCount = output_df.count(3)
-
-        nowHeadCount = withMaskCount + noMaskCount + wrongMaskCount
 
         if showloggingWindow:
             expandloggingWindow, showloggingWindow = imgui.begin("logging", True)
-            if noMaskCount > 0:
-                timeRetain = timeNow
-            if nowHeadCount > maxHeadCount:
-                maxHeadCount = nowHeadCount
-            if boxCount > maxBoxCount:
-                maxBoxCount = boxCount
-            if noMaskCount >= 1 and cBoxLogToInfluxDB == True and time.time() > timeEpoch + 1:
-                DBhealth = loggingToInfluxDB(noMaskCount)
-            with imgui.font(newFont):
-                imgui.text(f"Person in view: {nowHeadCount}\tRecorded max person in view: {maxHeadCount}")
-                imgui.text(f"Box in view: {boxCount}\t\tRecorded max boxes in view: {maxBoxCount}")
-                imgui.new_line()
-                imgui.text(f"{timeRetain}: Person with No Mask detected.")
-                imgui.new_line()
-                imgui.text_wrapped(f"InfluxDB Health: {DBhealth}")
             imgui.end()
 
         gl.glClearColor(clearColorRGB[0], clearColorRGB[1], clearColorRGB[2], 1)
