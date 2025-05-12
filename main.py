@@ -128,12 +128,6 @@ def impl_pysdl2_init():
     return window, gl_context
 
 
-# def yolo_predict(model, src):
-#     #   Path to yolov5, 'custom', path to weight, source='local'
-#     results = model.predict(source=src, classes=[0])
-#     return results[0]
-
-
 class YOLOPredict(threading.Thread):
     def __init__(self, model):
         super().__init__()
@@ -332,9 +326,9 @@ def main():
             _, cBoxLogToInfluxDB = imgui.checkbox("Log to InfluxDB (experimental feature)", cBoxLogToInfluxDB)
             imgui.new_line()
             imgui.text("Settings:")
-            _, cBoxBoxClass = imgui.checkbox("Box", cBoxBoxClass)
+            _, cBoxBoxClass = imgui.checkbox("Person", cBoxBoxClass)
             _, boxThreshold = imgui.slider_float(
-                "Box Threshold",
+                "Person Threshold",
                 boxThreshold,
                 min_value=0.0,
                 max_value=1.0,
