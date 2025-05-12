@@ -21,4 +21,4 @@ print(f"Randomly selected image: {random_image_path}")
 
 # Run detection using the native predict() method.
 # The "show=True" parameter will automatically display the resulting annotated image.
-results = model.predict(source=random_image_path, show=True)
+results = model.predict(source=random_image_path, show=True, classes=[0])
