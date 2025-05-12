@@ -1,15 +1,11 @@
 import ctypes
+import queue
 import threading
 import time
-import re
-
-from PIL import Image
-import numpy
 
 import cv2
 import imgui
-
-from ultralytics import YOLO
+import numpy
 
 # import Jetson.GPIO as GPIO
 import OpenGL.GL as gl
@@ -17,8 +13,10 @@ import sdl2 as sdl
 import torch
 from imgui.integrations.sdl2 import SDL2Renderer
 from influxdb_client import InfluxDBClient, Point
-from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 from influxdb_client.client.exceptions import InfluxDBError
+from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
+from PIL import Image
+from ultralytics import YOLO
 
 VideoDevice = 0
 webcam_frame_width = 640
@@ -130,10 +128,43 @@ def impl_pysdl2_init():
     return window, gl_context
 
 
-def yolo_predict(model, src):
-    #   Path to yolov5, 'custom', path to weight, source='local'
-    results = model.predict(source=src, classes=[0])
-    return results[0]
+# def yolo_predict(model, src):
+#     #   Path to yolov5, 'custom', path to weight, source='local'
+#     results = model.predict(source=src, classes=[0])
+#     return results[0]
+
+
+class YOLOPredict(threading.Thread):
+    def __init__(self, model):
+        super().__init__()
+        self.name = "yolo inference"
+        self.daemon = True
+        self.model = model
+        self.frame_queue = queue.Queue(maxsize=1)
+        self.result = None
+        self._stop_event = threading.Event()
+
+    def update_frame(self, frame):
+        # If the queue has an old frame, remove it.
+        if not self.frame_queue.empty():
+            try:
+                self.frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+        self.frame_queue.put(frame)
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                # Try to get the latest frame. Wait up to 1 second.
+                frame = self.frame_queue.get(timeout=1)
+            except queue.Empty:
+                continue
+
+            self.result = self.model.predict(source=frame, classes=[0])[0]
+
+    def stop(self):
+        self._stop_event.set()
 
 
 # 3 FPS impact (TODO: switch to threading?)
@@ -199,8 +230,6 @@ def main():
     # GPIO.setmode(GPIO.BOARD)
     # GPIO.setup(GPIOLEDPin, GPIO.OUT, initial=GPIO.LOW)
 
-    model = YOLO(OPENVINO_MODEL_PATH, task="detect")
-
     # Setup Image Capture
     video = CameraThread(
         src=VideoDevice,
@@ -210,6 +239,11 @@ def main():
     video.start()
     frame_height = webcam_frame_height
     frame_width = webcam_frame_width
+
+    # YOLO
+    model = YOLO(OPENVINO_MODEL_PATH, task="detect")
+    yolo_prediction = YOLOPredict(model)
+    yolo_prediction.start()
 
     # Setup logging
     timeRetain = ""
@@ -243,11 +277,12 @@ def main():
         image = video.read()
         # print(output)
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        output = yolo_predict(model, img_rgb)
+        yolo_prediction.update_frame(img_rgb)
+        output = yolo_prediction.result
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
-        if output.boxes.xyxy.size()[0] != 0:  # how many object detected
+        if (output is not None) and (output.boxes.xyxy.size()[0] != 0):  # how many object detected
             for box in output.boxes:
                 xmin, ymin, xmax, ymax, conf, _ = box.data.tolist()[0]
                 xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
@@ -278,18 +313,22 @@ def main():
         imgui.new_frame()  # type: ignore
 
         if showCustomWindow:
-            preprocess_time, inference_time, post_time = (
-                output.speed["preprocess"],
-                output.speed["inference"],
-                output.speed["postprocess"],
-            )
+            preprocess_time, inference_time, post_time = 0, 1, 0
+            if output is not None:
+                preprocess_time, inference_time, post_time = (
+                    output.speed["preprocess"],
+                    output.speed["inference"],
+                    output.speed["postprocess"],
+                )
             expandCustomWindow, showCustomWindow = imgui.begin("sdlWindow", True)
             imgui.text(f"FPS: {io.framerate:.2f}")
             _, clearColorRGB = imgui.color_edit3("Background Color", *clearColorRGB)
             imgui.new_line()
             imgui.text(f"Total Threads: {threading.active_count()}")
             imgui.new_line()
-            imgui.text(f"Pre: {preprocess_time:.2f}ms Inf: {inference_time:.2f}ms Post: {post_time:.2f}ms")
+            imgui.text(
+                f"Pre: {preprocess_time:.2f}ms Inf: {inference_time:.2f}ms Post: {post_time:.2f}ms       FPS: {1000/inference_time:.2f}"
+            )
             _, cBoxLogToInfluxDB = imgui.checkbox("Log to InfluxDB (experimental feature)", cBoxLogToInfluxDB)
             imgui.new_line()
             imgui.text("Settings:")
@@ -312,8 +351,9 @@ def main():
         timeNow = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         # Separate box and head count. 0 = box, 1 = mask, 2 = wo_mask, 3 = wrong_mask
         # There should be a better way of doing this...
-        output_df = output.to_df()
-        boxCount = output_df.count(0)
+        if output is not None:
+            output_df = output.to_df()
+            boxCount = output_df.count(0)
 
         if showloggingWindow:
             expandloggingWindow, showloggingWindow = imgui.begin("logging", True)
