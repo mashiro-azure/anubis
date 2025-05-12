@@ -232,10 +232,6 @@ def main():
     showCustomWindow = True
     cBoxBoxClass = True
     boxThreshold = 0.4
-    cBoxWithMaskClass = True
-    maskThreshold = 0.4
-    cBoxWithoutMaskClass = True
-    cBoxWrongMaskClass = True
     showloggingWindow = True
     cBoxLogToInfluxDB = False
     maxHeadCount = 0
@@ -282,14 +278,18 @@ def main():
         imgui.new_frame()  # type: ignore
 
         if showCustomWindow:
-            preprocess_time, inference_time, NMS_time = output.speed
+            preprocess_time, inference_time, post_time = (
+                output.speed["preprocess"],
+                output.speed["inference"],
+                output.speed["postprocess"],
+            )
             expandCustomWindow, showCustomWindow = imgui.begin("sdlWindow", True)
             imgui.text(f"FPS: {io.framerate:.2f}")
             _, clearColorRGB = imgui.color_edit3("Background Color", *clearColorRGB)
             imgui.new_line()
             imgui.text(f"Total Threads: {threading.active_count()}")
             imgui.new_line()
-            imgui.text(f"Pre: {preprocess_time}ms Inf: {inference_time}ms NMS: {NMS_time}ms")
+            imgui.text(f"Pre: {preprocess_time:.2f}ms Inf: {inference_time:.2f}ms Post: {post_time:.2f}ms")
             _, cBoxLogToInfluxDB = imgui.checkbox("Log to InfluxDB (experimental feature)", cBoxLogToInfluxDB)
             imgui.new_line()
             imgui.text("Settings:")
@@ -301,16 +301,6 @@ def main():
                 max_value=1.0,
                 format="%.2f",
             )
-            _, cBoxWithMaskClass = imgui.checkbox("With Mask", cBoxWithMaskClass)
-            _, maskThreshold = imgui.slider_float(
-                "Mask Threshold",
-                maskThreshold,
-                min_value=0.0,
-                max_value=1.0,
-                format="%.2f",
-            )
-            _, cBoxWithoutMaskClass = imgui.checkbox("Without Mask", cBoxWithoutMaskClass)
-            _, cBoxWrongMaskClass = imgui.checkbox("Masks Worn Incorrectly.", cBoxWrongMaskClass)
             imgui.end()
 
         if showImageTexture:
