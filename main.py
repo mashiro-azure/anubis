@@ -252,7 +252,7 @@ def main():
 
     io = imgui.get_io()  # type: ignore
     clearColorRGB = 1.0, 1.0, 1.0
-    # newFont = io.fonts.add_font_from_file_ttf("fonts/NotoSansMono-Regular.ttf", 36)
+    newFont = io.fonts.add_font_from_file_ttf("fonts/NotoSansMono-Regular.ttf", 36)
     impl.refresh_font_texture()
 
     # States and variables
@@ -262,8 +262,7 @@ def main():
     boxThreshold = 0.4
     showloggingWindow = True
     cBoxLogToInfluxDB = False
-    maxHeadCount = 0
-    maxBoxCount = 0
+    nowHeadCount = 0
     showImageTexture = True
 
     while running:
@@ -347,10 +346,14 @@ def main():
         # There should be a better way of doing this...
         if output is not None:
             output_df = output.to_df()
-            boxCount = output_df.count(0)
+            nowHeadCount = output_df.shape[0]
 
         if showloggingWindow:
             expandloggingWindow, showloggingWindow = imgui.begin("logging", True)
+            with imgui.font(newFont):
+                imgui.text(f"Person in view: {nowHeadCount}")
+                imgui.new_line()
+                imgui.text_wrapped(f"InfluxDB Health: {DBhealth}")
             imgui.end()
 
         gl.glClearColor(clearColorRGB[0], clearColorRGB[1], clearColorRGB[2], 1)
