@@ -17,11 +17,17 @@ from influxdb_client.client.exceptions import InfluxDBError
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 from PIL import Image
 from ultralytics import YOLO
+import paho.mqtt.client as mqtt
+import RPi.GPIO as GPIO
 
 VideoDevice = 0
 webcam_frame_width = 640
 webcam_frame_height = 480
 # GPIOLEDPin = 7
+mqttMessage = None
+GPIO.setmode(GPIO.BCM)
+fan_pin = 18
+GPIO.setup(fan_pin, GPIO.OUT)
 
 OPENVINO_MODEL_PATH = "./yolo11s_int8_openvino_model/"
 
@@ -177,6 +183,17 @@ def loggingToInfluxDB(triggerActive):
     return str(DBHealth.message)
 
 
+def on_connect(client, userdata, flags, rc):
+    print("Connected with result code", rc)
+    client.subscribe("anubis/data")
+
+
+def on_message(client, userdata, msg):
+    print(f"Received message on topic {msg.topic}: {msg.payload.decode()}")
+    global mqttMessage
+    mqttMessage = msg.payload.decode()
+
+
 def showSplash(SDLwindow):
     splashImage = Image.open("SplashScreen-2.png").convert("RGB").transpose(Image.FLIP_TOP_BOTTOM)
     splashImageData = numpy.array(splashImage, numpy.uint8)
@@ -272,6 +289,14 @@ def main():
     deactivationThreshold = 3.0  # how long to wait before deactivating the signal
     triggerActiveColor = 1.0, 0.0, 0.0
 
+    # mqtt
+    client = mqtt.Client()
+
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect("localhost", 1883, keepalive=60)
+    client.loop_forever()
+
     while running:
         # read frame
         image = video.read()
@@ -279,6 +304,10 @@ def main():
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         yolo_prediction.update_frame(img_rgb)
         output = yolo_prediction.result
+
+        # mqtt process
+        mqttMessageProcessed = mqttMessage.split(",")
+        fanSpeed = min(100, max(0, (mqttMessageProcessed[0] - 30) * 5))
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
