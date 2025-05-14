@@ -320,7 +320,8 @@ def main():
         # mqtt process
         if mqttMessage is not None:
             temperaure, pressure = mqttMessage.split(",")
-            fanSpeed = min(100, max(0, (int(float(temperaure)) - 30) * 5))
+            fanSpeed = min(100, max(0, (int(float(temperaure)) - 25) * 5))
+            pressure = int(pressure)
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
