@@ -162,19 +162,19 @@ class YOLOPredict(threading.Thread):
 
 
 # 3 FPS impact (TODO: switch to threading?)
-# def loggingToInfluxDB(noMaskCount):
-#     bucket = "maskAI"
-#     with InfluxDBClient.from_config_file("influxdb.ini") as client:
-#         try:
-#             DBHealth = client.health()
-#             if DBHealth.status == "pass":
-#                 p = Point("no_mask").field("amount", noMaskCount)
-#                 client.write_api(write_options=SYNCHRONOUS).write(
-#                     bucket=bucket, record=p, write_precision=WritePrecision.S
-#                 )
-#         except InfluxDBError as e:
-#             pass
-#     return str(DBHealth.message)
+def loggingToInfluxDB(triggerActive):
+    bucket = "anubis"
+    with InfluxDBClient.from_config_file("influxdb.ini") as client:
+        try:
+            DBHealth = client.health()
+            if DBHealth.status == "pass":
+                p = Point("person").field("active", int(triggerActive))
+                client.write_api(write_options=SYNCHRONOUS).write(
+                    bucket=bucket, record=p, write_precision=WritePrecision.S
+                )
+        except InfluxDBError as e:
+            pass
+    return str(DBHealth.message)
 
 
 def showSplash(SDLwindow):
@@ -241,8 +241,8 @@ def main():
 
     # Setup logging
     timeRetain = ""
-    # DBhealth = loggingToInfluxDB(0)
-    DBhealth = ""
+    DBhealth = loggingToInfluxDB(0)
+    # DBhealth = ""
     timeEpoch = time.time()
 
     # Setup imgui
@@ -261,7 +261,7 @@ def main():
     cBoxBoxClass = True
     boxThreshold = 0.4
     showloggingWindow = True
-    cBoxLogToInfluxDB = False
+    cBoxLogToInfluxDB = True
     nowHeadCount = 0
     showImageTexture = True
     # TODO:
@@ -314,8 +314,6 @@ def main():
 
         # effect activation
         current_time = time.time()
-        # Separate box and head count. 0 = box, 1 = mask, 2 = wo_mask, 3 = wrong_mask
-        # There should be a better way of doing this...
         if output is not None:
             output_df = output.to_df()
             nowHeadCount = output_df.shape[0]
@@ -328,6 +326,7 @@ def main():
             if (current_time - activationStartTime) >= activationThreshold:
                 if not triggerActive:
                     triggerActive = True
+                    loggingToInfluxDB(triggerActive)
         else:
             if deactivationStartTime is None:
                 deactivationStartTime = current_time
@@ -336,6 +335,7 @@ def main():
             if (current_time - deactivationStartTime) >= deactivationThreshold:
                 if triggerActive:
                     triggerActive = False
+                    loggingToInfluxDB(triggerActive)
 
         if triggerActive:
             triggerActiveColor = 0.0, 1.0, 0.0

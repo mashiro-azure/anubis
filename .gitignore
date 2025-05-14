@@ -6,3 +6,5 @@ Python-3.11.2.tgz
 val2017.zip
 coco/
 coco/**
+influxdb.ini
+ssh.txt
