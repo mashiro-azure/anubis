@@ -264,6 +264,13 @@ def main():
     cBoxLogToInfluxDB = False
     nowHeadCount = 0
     showImageTexture = True
+    # TODO:
+    triggerActive = False
+    activationStartTime = None  # when to activate signal
+    deactivationStartTime = None  # when to deactivate the signal
+    activationThreshold = 3.0  # how long to wait before activating the signal
+    deactivationThreshold = 3.0  # how long to wait before deactivating the signal
+    triggerActiveColor = 1.0, 0.0, 0.0
 
     while running:
         # read frame
@@ -305,6 +312,36 @@ def main():
 
         imgui.new_frame()  # type: ignore
 
+        # effect activation
+        current_time = time.time()
+        # Separate box and head count. 0 = box, 1 = mask, 2 = wo_mask, 3 = wrong_mask
+        # There should be a better way of doing this...
+        if output is not None:
+            output_df = output.to_df()
+            nowHeadCount = output_df.shape[0]
+
+        if nowHeadCount > 0:
+            if activationStartTime is None:
+                activationStartTime = current_time
+            deactivationStartTime = None
+
+            if (current_time - activationStartTime) >= activationThreshold:
+                if not triggerActive:
+                    triggerActive = True
+        else:
+            if deactivationStartTime is None:
+                deactivationStartTime = current_time
+            activationStartTime = None
+
+            if (current_time - deactivationStartTime) >= deactivationThreshold:
+                if triggerActive:
+                    triggerActive = False
+
+        if triggerActive:
+            triggerActiveColor = 0.0, 1.0, 0.0
+        else:
+            triggerActiveColor = 1.0, 0.0, 0.0
+
         if showCustomWindow:
             preprocess_time, inference_time, post_time = 0, 1, 0
             if output is not None:
@@ -333,6 +370,18 @@ def main():
                 max_value=1.0,
                 format="%.2f",
             )
+
+            imgui.new_line()
+            imgui.text("Trigger: ")
+            _, activationThreshold = imgui.slider_int(
+                "Activation Threshold (s)", activationThreshold, min_value=0, max_value=10
+            )
+            _, deactivationThreshold = imgui.slider_int(
+                "Deactivation Threshold (s)", deactivationThreshold, min_value=0, max_value=10
+            )
+            imgui.color_button(
+                "triggerActive", *triggerActiveColor, imgui.COLOR_EDIT_NO_PICKER | imgui.COLOR_EDIT_NO_OPTIONS
+            )
             imgui.end()
 
         if showImageTexture:
@@ -342,11 +391,6 @@ def main():
 
         # Logging stuff
         timeNow = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        # Separate box and head count. 0 = box, 1 = mask, 2 = wo_mask, 3 = wrong_mask
-        # There should be a better way of doing this...
-        if output is not None:
-            output_df = output.to_df()
-            nowHeadCount = output_df.shape[0]
 
         if showloggingWindow:
             expandloggingWindow, showloggingWindow = imgui.begin("logging", True)
