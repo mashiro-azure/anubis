@@ -18,16 +18,17 @@ from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 from PIL import Image
 from ultralytics import YOLO
 import paho.mqtt.client as mqtt
-import RPi.GPIO as GPIO
+
+# import RPi.GPIO as GPIO
 
 VideoDevice = 0
 webcam_frame_width = 640
 webcam_frame_height = 480
 # GPIOLEDPin = 7
 mqttMessage = None
-GPIO.setmode(GPIO.BCM)
+# GPIO.setmode(GPIO.BCM)
 fan_pin = 18
-GPIO.setup(fan_pin, GPIO.OUT)
+# GPIO.setup(fan_pin, GPIO.OUT)
 
 OPENVINO_MODEL_PATH = "./yolo11s_int8_openvino_model/"
 
@@ -194,6 +195,16 @@ def on_message(client, userdata, msg):
     mqttMessage = msg.payload.decode()
 
 
+def triggerActivation():
+    # TODO:
+    return
+
+
+def triggerDeactivation():
+    # TODO;
+    return
+
+
 def showSplash(SDLwindow):
     splashImage = Image.open("SplashScreen-2.png").convert("RGB").transpose(Image.FLIP_TOP_BOTTOM)
     splashImageData = numpy.array(splashImage, numpy.uint8)
@@ -288,6 +299,7 @@ def main():
     activationThreshold = 3.0  # how long to wait before activating the signal
     deactivationThreshold = 3.0  # how long to wait before deactivating the signal
     triggerActiveColor = 1.0, 0.0, 0.0
+    fanSpeed, temperaure, pressure = 0, 0, 0
 
     # mqtt
     client = mqtt.Client()
@@ -295,7 +307,7 @@ def main():
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect("localhost", 1883, keepalive=60)
-    client.loop_forever()
+    client.loop_start()
 
     while running:
         # read frame
@@ -306,8 +318,9 @@ def main():
         output = yolo_prediction.result
 
         # mqtt process
-        mqttMessageProcessed = mqttMessage.split(",")
-        fanSpeed = min(100, max(0, (mqttMessageProcessed[0] - 30) * 5))
+        if mqttMessage is not None:
+            temperaure, pressure = mqttMessage.split(",")
+            fanSpeed = min(100, max(0, (int(float(temperaure)) - 30) * 5))
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
@@ -368,8 +381,10 @@ def main():
 
         if triggerActive:
             triggerActiveColor = 0.0, 1.0, 0.0
+            triggerActivation()
         else:
             triggerActiveColor = 1.0, 0.0, 0.0
+            triggerDeactivation()
 
         if showCustomWindow:
             preprocess_time, inference_time, post_time = 0, 1, 0
@@ -411,6 +426,8 @@ def main():
             imgui.color_button(
                 "triggerActive", *triggerActiveColor, imgui.COLOR_EDIT_NO_PICKER | imgui.COLOR_EDIT_NO_OPTIONS
             )
+            imgui.new_line()
+            imgui.text(f"Temperature: {temperaure} / Pressure: {pressure} / Fan Speed: {fanSpeed}")
             imgui.end()
 
         if showImageTexture:
@@ -436,6 +453,8 @@ def main():
         impl.render(imgui.get_draw_data())
         sdl.SDL_GL_SwapWindow(SDLwindow)
 
+    client.loop_stop()
+    client.disconnect()
     video.stop()
     # loggingThread.join()
     impl.shutdown()
