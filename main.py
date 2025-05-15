@@ -9,6 +9,7 @@ import numpy
 
 # import Jetson.GPIO as GPIO
 import OpenGL.GL as gl
+import paho.mqtt.client as mqtt
 import sdl2 as sdl
 import torch
 from imgui.integrations.sdl2 import SDL2Renderer
@@ -17,7 +18,6 @@ from influxdb_client.client.exceptions import InfluxDBError
 from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
 from PIL import Image
 from ultralytics import YOLO
-import paho.mqtt.client as mqtt
 
 # import RPi.GPIO as GPIO
 
@@ -25,12 +25,13 @@ VideoDevice = 0
 webcam_frame_width = 640
 webcam_frame_height = 480
 # GPIOLEDPin = 7
-mqttMessage = None
 # GPIO.setmode(GPIO.BCM)
 fan_pin = 18
 # GPIO.setup(fan_pin, GPIO.OUT)
 
 OPENVINO_MODEL_PATH = "./yolo11s_int8_openvino_model/"
+
+mqtt_data = {"anubis/data": (0.0, 0), "anubis/audio_score": 0.0}
 
 
 class CameraThread:
@@ -187,12 +188,23 @@ def loggingToInfluxDB(triggerActive):
 def on_connect(client, userdata, flags, rc):
     print("Connected with result code", rc)
     client.subscribe("anubis/data")
+    client.subscribe("anubis/audio_score")
 
 
 def on_message(client, userdata, msg):
     print(f"Received message on topic {msg.topic}: {msg.payload.decode()}")
-    global mqttMessage
-    mqttMessage = msg.payload.decode()
+    payload = msg.payload.decode()
+    match msg.topic:
+        case "anubis/data":
+            parts = payload.split(",")
+            if len(parts) == 2:
+                temp = float(parts[0])
+                pressure = int(parts[1])
+                mqtt_data["anubis/data"] = (temp, pressure)
+
+        case "anubis/audio_score":
+            audio_score = float(payload)
+            mqtt_data["anubis/audio_score"] = audio_score
 
 
 def triggerActivation():
@@ -299,7 +311,10 @@ def main():
     activationThreshold = 3.0  # how long to wait before activating the signal
     deactivationThreshold = 3.0  # how long to wait before deactivating the signal
     triggerActiveColor = 1.0, 0.0, 0.0
-    fanSpeed, temperaure, pressure = 0, 0, 0
+    fanSpeed, temperaure, pressure, audio_score = 0, 0, 0, 0.0
+    temperatureThreshold = 25
+    pressureThreshold = 3000
+    audioThreshold = 0.7
 
     # mqtt
     client = mqtt.Client()
@@ -318,10 +333,10 @@ def main():
         output = yolo_prediction.result
 
         # mqtt process
-        if mqttMessage is not None:
-            temperaure, pressure = mqttMessage.split(",")
+        if mqtt_data["anubis/data"] is not None and mqtt_data["anubis/audio_score"] is not None:
+            temperaure, pressure = mqtt_data["anubis/data"]
+            audio_score = mqtt_data["anubis/audio_score"]
             fanSpeed = min(100, max(0, (int(float(temperaure)) - 25) * 5))
-            pressure = int(pressure)
 
         # TODO: move this to the imageProcessing thread.
         # print custom bounding box
@@ -361,7 +376,12 @@ def main():
             output_df = output.to_df()
             nowHeadCount = output_df.shape[0]
 
-        if nowHeadCount > 0:
+        # activation rules
+        rule_temperature = temperaure >= temperatureThreshold
+        rule_pressure = pressure >= pressureThreshold
+        rule_vision = nowHeadCount > 0
+        rule_audio = audio_score >= audioThreshold
+        if rule_temperature and (rule_pressure or rule_vision or rule_audio):
             if activationStartTime is None:
                 activationStartTime = current_time
             deactivationStartTime = None
@@ -428,7 +448,9 @@ def main():
                 "triggerActive", *triggerActiveColor, imgui.COLOR_EDIT_NO_PICKER | imgui.COLOR_EDIT_NO_OPTIONS
             )
             imgui.new_line()
-            imgui.text(f"Temperature: {temperaure} / Pressure: {pressure} / Fan Speed: {fanSpeed}")
+            imgui.text(
+                f"Temperature: {temperaure} / Pressure: {pressure} / Audio: {audio_score} / Fan Speed: {fanSpeed}"
+            )
             imgui.end()
 
         if showImageTexture:
