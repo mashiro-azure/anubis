@@ -15,7 +15,7 @@ import torch
 from imgui.integrations.sdl2 import SDL2Renderer
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.exceptions import InfluxDBError
-from influxdb_client.client.write_api import SYNCHRONOUS, WritePrecision
+from influxdb_client.client.write_api import ASYNCHRONOUS, WritePrecision
 from PIL import Image
 from ultralytics import YOLO
 
@@ -176,8 +176,8 @@ def loggingToInfluxDB(triggerActive):
         try:
             DBHealth = client.health()
             if DBHealth.status == "pass":
-                p = Point("person").field("active", int(triggerActive))
-                client.write_api(write_options=SYNCHRONOUS).write(
+                p = Point("person").field("trigger", int(triggerActive))
+                client.write_api(write_options=ASYNCHRONOUS).write(
                     bucket=bucket, record=p, write_precision=WritePrecision.S
                 )
         except InfluxDBError as e:
@@ -313,8 +313,7 @@ def main():
     triggerActiveColor = 1.0, 0.0, 0.0
     fanSpeed, temperaure, pressure, audio_score = 0, 0, 0, 0.0
     temperatureThreshold = 25
-    pressureThreshold = 3000
-    audioThreshold = 0.7
+    pressureThreshold = 0
 
     # mqtt
     client = mqtt.Client()
@@ -378,9 +377,9 @@ def main():
 
         # activation rules
         rule_temperature = temperaure >= temperatureThreshold
-        rule_pressure = pressure >= pressureThreshold
+        rule_pressure = pressure > pressureThreshold
         rule_vision = nowHeadCount > 0
-        rule_audio = audio_score >= audioThreshold
+        rule_audio = audio_score > 0
         if rule_temperature and rule_pressure and (rule_vision or rule_audio):
             if activationStartTime is None:
                 activationStartTime = current_time
@@ -390,6 +389,8 @@ def main():
                 if not triggerActive:
                     triggerActive = True
                     loggingToInfluxDB(triggerActive)
+                    triggerActivation(client, fanSpeed)
+
         else:
             if deactivationStartTime is None:
                 deactivationStartTime = current_time
@@ -399,13 +400,12 @@ def main():
                 if triggerActive:
                     triggerActive = False
                     loggingToInfluxDB(triggerActive)
+                    triggerDeactivation(client, 0)
 
         if triggerActive:
             triggerActiveColor = 0.0, 1.0, 0.0
-            triggerActivation(client, fanSpeed)
         else:
             triggerActiveColor = 1.0, 0.0, 0.0
-            triggerDeactivation(client, 0)
 
         if showCustomWindow:
             preprocess_time, inference_time, post_time = 0, 1, 0
@@ -449,10 +449,11 @@ def main():
             )
             imgui.new_line()
             imgui.text(
-                f"Temperature: {temperaure} / Pressure: {pressure} / Audio: {audio_score} / Fan Speed: {fanSpeed}"
+                f"Temperature: {temperaure} / Pressure: {pressure} / Audio: {audio_score} / Expected Fan Speed: {fanSpeed}"
             )
             imgui.new_line()
             overrideOnClicked = imgui.button("on")
+            imgui.same_line()
             overrideOffClicked = imgui.button("off")
             imgui.end()
 
