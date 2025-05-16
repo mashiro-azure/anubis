@@ -93,7 +93,7 @@ class CameraThread:
 
 
 def impl_pysdl2_init():
-    width, height = 1920, 1080
+    width, height = 1280, 720
     window_name = "minimal ImGui/SDL2 example"
 
     if sdl.SDL_Init(sdl.SDL_INIT_VIDEO) < 0:
