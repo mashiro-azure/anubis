@@ -21,7 +21,7 @@ from ultralytics import YOLO
 
 # import RPi.GPIO as GPIO
 
-VideoDevice = 0
+VideoDevice = 2
 webcam_frame_width = 640
 webcam_frame_height = 480
 # GPIOLEDPin = 7
@@ -40,7 +40,7 @@ class CameraThread:
         self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("Y", "V", "Y", "U"))
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc("M", "P", "E", "G"))
         self.texture = gl.glGenTextures(1)
         if not (self.cap.isOpened()):
             print("VideoCapture error.")
@@ -101,11 +101,11 @@ def impl_pysdl2_init():
         exit(1)
 
     sdl.SDL_GL_SetAttribute(sdl.SDL_GL_DOUBLEBUFFER, 1)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_ACCELERATED_VISUAL, 0)
+    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_ACCELERATED_VISUAL, 1)
     # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_FLAGS, sdl.SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MAJOR_VERSION, 3)
+    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MAJOR_VERSION, 1)
     sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_MINOR_VERSION, 2)
-    sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_PROFILE_MASK, sdl.SDL_GL_CONTEXT_PROFILE_COMPATIBILITY)
+    # sdl.SDL_GL_SetAttribute(sdl.SDL_GL_CONTEXT_PROFILE_MASK, sdl.SDL_GL_CONTEXT_PROFILE_COMPATIBILITY)
 
     # sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_HIGHDPI_DISABLED, b"1")
 
@@ -381,7 +381,7 @@ def main():
         rule_pressure = pressure >= pressureThreshold
         rule_vision = nowHeadCount > 0
         rule_audio = audio_score >= audioThreshold
-        if rule_temperature and (rule_pressure or rule_vision or rule_audio):
+        if rule_temperature and rule_pressure and (rule_vision or rule_audio):
             if activationStartTime is None:
                 activationStartTime = current_time
             deactivationStartTime = None
