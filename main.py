@@ -451,7 +451,15 @@ def main():
             imgui.text(
                 f"Temperature: {temperaure} / Pressure: {pressure} / Audio: {audio_score} / Fan Speed: {fanSpeed}"
             )
+            imgui.new_line()
+            overrideOnClicked = imgui.button("on")
+            overrideOffClicked = imgui.button("off")
             imgui.end()
+
+            if overrideOnClicked:
+                client.publish("anubis/fan_control", "100")
+            if overrideOffClicked:
+                client.publish("anubis/fan_control", "0")
 
         if showImageTexture:
             expandImageTexture, showImageTexture = imgui.begin("ImageTexture", False)
