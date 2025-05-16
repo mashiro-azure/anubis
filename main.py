@@ -207,13 +207,13 @@ def on_message(client, userdata, msg):
             mqtt_data["anubis/audio_score"] = audio_score
 
 
-def triggerActivation():
-    # TODO:
+def triggerActivation(client: mqtt.Client, fanSpeed: int):
+    client.publish("anubis/fan_control", str(fanSpeed))
     return
 
 
-def triggerDeactivation():
-    # TODO;
+def triggerDeactivation(client: mqtt.Client, fanSpeed: int):
+    client.publish("anubis/fan_control", "0")
     return
 
 
@@ -402,10 +402,10 @@ def main():
 
         if triggerActive:
             triggerActiveColor = 0.0, 1.0, 0.0
-            triggerActivation()
+            triggerActivation(client, fanSpeed)
         else:
             triggerActiveColor = 1.0, 0.0, 0.0
-            triggerDeactivation()
+            triggerDeactivation(client, 0)
 
         if showCustomWindow:
             preprocess_time, inference_time, post_time = 0, 1, 0
